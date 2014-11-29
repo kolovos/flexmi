@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<?nsuri http://www.eclipse.org/ecore?>
+<package name="foo">
+	<class name="bar" abstract="true">
+		<ref type="bar"/>
+	</class>
+</package>
