@@ -160,17 +160,28 @@ public class FlexmiResource extends ResourceImpl {
 			EReference eReference = unresolvedReference.getEReference();
 			if (eReference.isMany()) {
 				
-				List<EObject> candidates = idCache.get(unresolvedReference.getValue());
-				if (candidates != null) {
-					for (EObject candidate : candidates) {
+				if ("*".equals(unresolvedReference.getValue())) {
+					Iterator<EObject> it = this.getAllContents();
+					while (it.hasNext()) {
+						EObject candidate = it.next();
 						if (eReference.getEReferenceType().isInstance(candidate)) {
 							((List<EObject>) unresolvedReference.getEObject().eGet(eReference)).add(candidate);
-							resolvedReferences.add(unresolvedReference);
-							break;
+						}
+					}
+					resolvedReferences.add(unresolvedReference);
+				}
+				else {
+					List<EObject> candidates = idCache.get(unresolvedReference.getValue());
+					if (candidates != null) {
+						for (EObject candidate : candidates) {
+							if (eReference.getEReferenceType().isInstance(candidate)) {
+								((List<EObject>) unresolvedReference.getEObject().eGet(eReference)).add(candidate);
+								resolvedReferences.add(unresolvedReference);
+								break;
+							}
 						}
 					}
 				}
-				
 			}
 			else {
 				List<EObject> candidates = idCache.get(unresolvedReference.getValue());
@@ -188,7 +199,7 @@ public class FlexmiResource extends ResourceImpl {
 		
 		unresolvedReferences.removeAll(resolvedReferences);
 		for (UnresolvedReference reference : unresolvedReferences) {
-			parseWarnings.add(new ParseWarning(reference.getLine(), "Could not resolve target " + reference.getValue() + " for reference " + reference.getAttributeName()));
+			parseWarnings.add(new ParseWarning(reference.getLine(), "Could not resolve target " + reference.getValue() + " for reference " + reference.getAttributeName() + " (" + reference.getEReference().getName() + ")"));
 		}
 		idCache.clear();
 	}
@@ -226,8 +237,7 @@ public class FlexmiResource extends ResourceImpl {
 				if (eClass != null) {
 					containment = eReference;
 					break;
-				}
-				
+				}				
 			}
 			
 			if (containment != null) {
@@ -350,6 +360,7 @@ public class FlexmiResource extends ResourceImpl {
 				allSubtypes.add(candidate);
 			}
 		}
+		allSubtypes.add(eClass);
 		return allSubtypes;
 	}
 			
