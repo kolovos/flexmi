@@ -67,6 +67,7 @@ public class FlexmiContentOutlinePage extends ContentOutlinePage {
 		  
 		@Override
 		public void selectionChanged(IWorkbenchPart part, ISelection selection) {
+			try {
 			if (selection instanceof TextSelection) {
 				TextSelection textSelection = (TextSelection) selection;
 				EObject eObject = editor.getResource().getLineEObjectTrace().get(textSelection.getStartLine()+1);
@@ -74,7 +75,8 @@ public class FlexmiContentOutlinePage extends ContentOutlinePage {
 					getTreeViewer().setSelection(new StructuredSelection(eObject), true);
 				}
 			}
-			
+			}
+			catch (Exception ex) {}
 		}
 	});
     }

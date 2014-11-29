@@ -38,16 +38,22 @@ import org.xml.sax.helpers.DefaultHandler;
 
 public class FlexmiResource extends ResourceImpl {
 	
+	public static final String OPTION_FUZZY_CONTAINMENT_MATCHING = "fuzzyContainmentMatching";
+	public static final String OPTION_ORPHANS_AS_TOP_LEVEL = "orphansAsTopLevel";
+	public static final String OPTION_FUZZY_MATCHING_THRESHOLD = "fuzzyMatchingThreshold";
+	
 	protected HashMap<String, List<EObject>> idCache = new HashMap<String, List<EObject>>();
 	protected List<UnresolvedReference> unresolvedReferences = new ArrayList<UnresolvedReference>();
-	//protected List<ParseWarning> parseWarnings = new ArrayList<ParseWarning>();
-	protected Stack<EObject> stack = new Stack<EObject>();
+	protected Stack<Object> stack = new Stack<Object>();
 	protected Locator locator = null;
 	protected List<String> scripts = new ArrayList<String>();
 	protected HashMap<String, EClass> eClassCache = new HashMap<String, EClass>();
 	protected HashMap<EClass, List<EClass>> allSubtypesCache = new HashMap<EClass, List<EClass>>();
 	protected HashMap<EObject, Integer> eObjectLineTrace = new HashMap<EObject, Integer>();
 	protected HashMap<Integer, EObject> lineEObjectTrace = new HashMap<Integer, EObject>();
+	protected boolean fuzzyContainmentSlotMatching = true;
+	protected boolean orphanAsTopLevel = false;
+	protected int fuzzyMatchingThreshold = 2;
 	
 	public static void main(String[] args) throws Exception {
 		
@@ -81,16 +87,39 @@ public class FlexmiResource extends ResourceImpl {
 		}
 	}
 	
+	protected void processOption(String key, String value) {
+		try {
+			if (OPTION_FUZZY_CONTAINMENT_MATCHING.equalsIgnoreCase(key)) {
+				fuzzyContainmentSlotMatching = Boolean.parseBoolean(value);
+			}
+			else if (OPTION_ORPHANS_AS_TOP_LEVEL.equalsIgnoreCase(key)) {
+				orphanAsTopLevel = Boolean.parseBoolean(value);
+			}
+			else if (OPTION_FUZZY_MATCHING_THRESHOLD.equalsIgnoreCase(key)) {
+				fuzzyMatchingThreshold = Integer.parseInt(value);
+			}
+			else throw new Exception("Unknown option");
+		}
+		catch (Exception ex) {
+			addParseWarning("Unsupported option " + key + ": " + ex.getMessage());
+		}
+	}
+	
 	public void doLoadImpl(InputStream inputStream, Map<?, ?> options) throws Exception {
 		getContents().clear();
 		unresolvedReferences.clear();
-		//parseWarnings.clear();
 		stack.clear();
 		scripts.clear();
 		eClassCache.clear();
 		allSubtypesCache.clear();
 		lineEObjectTrace.clear();
 		eObjectLineTrace.clear();
+		
+		if (options != null) {
+			for (Object key : options.keySet()) {
+				processOption(key + "", options.get(key) + "");
+			}
+		}
 		
 		SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();
 		DefaultHandler handler = new DefaultHandler() {
@@ -125,6 +154,7 @@ public class FlexmiResource extends ResourceImpl {
 				else if ("eol".equalsIgnoreCase(key)) {
 					scripts.add(value);
 				}
+				else processOption(key, value);
 			}
 			
 			@Override
@@ -153,32 +183,13 @@ public class FlexmiResource extends ResourceImpl {
 	}
 	
 	protected void addParseWarning(final String message) {
-		addParseWarning(message, locator.getLineNumber());
+		int line = 0;
+		if (locator != null) line = locator.getLineNumber();
+		addParseWarning(message, line);
 	}
 	
 	protected void addParseWarning(final String message, final int line) {
-		getWarnings().add(new Diagnostic() {
-			
-			@Override
-			public String getMessage() {
-				return message;
-			}
-			
-			@Override
-			public String getLocation() {
-				return FlexmiResource.this.getURI().toString();
-			}
-			
-			@Override
-			public int getLine() {
-				return line;
-			}
-			
-			@Override
-			public int getColumn() {
-				return 0;
-			}
-		});
+		getWarnings().add(new FlexmiDiagnostic(message, line, this));
 	}
 	
 	@SuppressWarnings("unchecked")
@@ -236,10 +247,16 @@ public class FlexmiResource extends ResourceImpl {
 	
 	@SuppressWarnings("unchecked")
 	protected void startElement(String uri, String localName, String name, Attributes attributes) throws SAXException {
+		
+		if (name.indexOf(":") > -1) {
+			name = name.substring(name.indexOf(":")+1);
+		}
+		
 		EObject eObject = null;
 		EClass eClass = null;
 		
-		if (stack.isEmpty()) {
+		// We're at the root or we treat orphan elements as top-level
+		if (stack.isEmpty() || (stack.peek() == null && orphanAsTopLevel)) {
 			eClass = eClassForName(name);
 			if (eClass != null) {
 				eObject = eClass.getEPackage().getEFactoryInstance().create(eClass);
@@ -252,64 +269,111 @@ public class FlexmiResource extends ResourceImpl {
 			stack.push(eObject);
 		}
 		else {
+			Object peek = stack.peek();
 			
-			EObject parent = stack.peek();
-			
-			if (parent == null) {
-				stack.push(null);
-				addParseWarning("Could not map element " + name + " to an EObject");
-				return;
-			}
-			
-			EReference containment = null;
-			
-			Set<EClass> candidates = new HashSet<EClass>();
-			for (EReference eReference : parent.eClass().getEAllContainments()) {
-				candidates.addAll(getAllSubtypes(eReference.getEReferenceType()));				
-			}
-			
-			eClass = (EClass) eNamedElementForName(name, candidates);
-			if (eClass != null) {
-				for (EReference eReference : parent.eClass().getEAllContainments()) {
-					if (getAllSubtypes(eReference.getEReferenceType()).contains(eClass)) {
-						containment = eReference;
-						break;
-					}
+			// We find an orphan elmeent but don't treat it as top-level
+			if (peek == null) {
+				if (peek == null) {
+					stack.push(null);
+					addParseWarning("Could not map element " + name + " to an EObject");
+					return;
 				}
 			}
-			
-			if (containment != null) {
-				eObject = eClass.getEPackage().getEFactoryInstance().create(eClass);
-				if (containment.isMany()) {
-					((List<EObject>) parent.eGet(containment)).add(eObject);
+			// The parent is an already-established containment slot
+			else if (peek instanceof ContainmentSlot) {
+				ContainmentSlot containmentSlot = (ContainmentSlot) peek;
+				eClass = (EClass) eNamedElementForName(name, getAllSubtypes(containmentSlot.getEReference().getEReferenceType()));
+				
+				if (eClass != null) {
+					eObject = eClass.getEPackage().getEFactoryInstance().create(eClass);
+					containmentSlot.newValue(eObject);
+					stack.push(eObject);
+					setAttributes(eObject, attributes);
 				}
 				else {
-					parent.eSet(containment, eObject);
+					stack.push(null);
+					addParseWarning("Could not map element " + name + " to an EObject");
 				}
-				setAttributes(eObject, attributes);
-				stack.push(eObject);
 			}
-			else {
-				stack.push(null);
-				addParseWarning("Could not map element " + name + " to an EObject");
+			// The parent is an EObject
+			else if (peek instanceof EObject) {
+				EObject parent = (EObject) peek;
+				
+				EReference containment = null;
+				
+				// No attributes -> Check whether there is a containment reference with that name
+				if (attributes.getLength() == 0) {
+					if (fuzzyContainmentSlotMatching) {
+						containment = (EReference) eNamedElementForName(name, parent.eClass().getEAllContainments());
+					}
+					else {
+						containment = (EReference) eNamedElementForName(name, parent.eClass().getEAllContainments(), false);				
+					}
+					if (containment != null) {
+						ContainmentSlot containmentSlot = new ContainmentSlot(containment, parent);
+						stack.push(containmentSlot);
+						return;
+					}
+				}
+				
+				// No containment references found
+				// Find potential types for the element
+				Set<EClass> candidates = new HashSet<EClass>();
+				for (EReference eReference : parent.eClass().getEAllContainments()) {
+					candidates.addAll(getAllSubtypes(eReference.getEReferenceType()));				
+				}
+				
+				// Get the best match and an appropriate containment reference
+				eClass = (EClass) eNamedElementForName(name, candidates);
+				if (eClass != null) {
+					for (EReference eReference : parent.eClass().getEAllContainments()) {
+						if (getAllSubtypes(eReference.getEReferenceType()).contains(eClass)) {
+							containment = eReference;
+							break;
+						}
+					}
+				}
+				
+				// Found an appropriate containment reference
+				if (containment != null) {
+					eObject = eClass.getEPackage().getEFactoryInstance().create(eClass);
+					if (containment.isMany()) {
+						((List<EObject>) parent.eGet(containment)).add(eObject);
+					}
+					else {
+						parent.eSet(containment, eObject);
+					}
+					setAttributes(eObject, attributes);
+					stack.push(eObject);
+				}
+				// No luck - add warning
+				else {
+					stack.push(null);
+					addParseWarning("Could not map element " + name + " to an EObject");
+				}
 			}
 		}
+			
 		
 	}
 	
 	protected void endElement(String uri, String localName, String name) throws SAXException {
-		EObject eObject = stack.pop();
-		if (eObject != null) {
-			eObjectLineTrace.put(eObject, locator.getLineNumber());
-			lineEObjectTrace.put(locator.getLineNumber(), eObject);
+		Object object = stack.pop();
+		if (object != null && object instanceof EObject) {
+			EObject eObject = (EObject) object;
+			trace(eObject, locator.getLineNumber());
 		}
+	}
+	
+	protected void trace(EObject eObject, int line) {
+		eObjectLineTrace.put(eObject, line);
+		lineEObjectTrace.put(line, eObject);
 	}
 	
 	protected void setAttributes(EObject eObject, Attributes attributes) {
 		
 		List<EStructuralFeature> eStructuralFeatures = getCandidateStructuralFeaturesForAttribute(eObject.eClass());
-		eObjectLineTrace.put(eObject, locator.getLineNumber());
-		lineEObjectTrace.put(locator.getLineNumber(), eObject);
+		trace(eObject, locator.getLineNumber());
 		
 		for (int i=0;i<attributes.getLength();i++) {
 			String name = attributes.getLocalName(i);
@@ -432,8 +496,7 @@ public class FlexmiResource extends ResourceImpl {
 	protected ENamedElement eNamedElementForName(String name, Collection<? extends ENamedElement> candidates, boolean fuzzy) {
 		
 		if (fuzzy) {
-			System.out.println(name + candidates);
-			int maxLongestSubstring = 2;
+			int maxLongestSubstring = fuzzyMatchingThreshold;
 			ENamedElement bestMatch = null;
 			for (ENamedElement candidate : candidates) {
 				int longestSubstring = longestSubstring(candidate.getName().toLowerCase(), name.toLowerCase());
@@ -486,6 +549,9 @@ public class FlexmiResource extends ResourceImpl {
 				}
 			}
 		}
+		
+		if (second.startsWith(first)) maxLen = maxLen * 2;
+		
 		return maxLen;
 	}
 }
