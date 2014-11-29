@@ -14,12 +14,14 @@ import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EcorePackage;
+import org.eclipse.emf.ecore.resource.Resource.Diagnostic;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.epsilon.flexmi.FlexmiResource;
 import org.eclipse.epsilon.flexmi.FlexmiResourceFactory;
 import org.eclipse.epsilon.flexmi.ParseWarning;
 import org.eclipse.jface.text.IDocument;
+import org.eclipse.jface.viewers.ISelection;
 import org.eclipse.ui.IEditorInput;
 import org.eclipse.ui.IEditorSite;
 import org.eclipse.ui.PartInitException;
@@ -34,6 +36,7 @@ public class FlexmiEditor extends TextEditor {
 	private ColorManager colorManager;
 	protected Job parseModuleJob = null;
 	protected FlexmiContentOutlinePage outlinePage = null;
+	protected FlexmiResource resource = null;
 	
 	public FlexmiEditor() {
 		super();
@@ -49,7 +52,7 @@ public class FlexmiEditor extends TextEditor {
 			throws PartInitException {
 		super.init(site, input);
 		
-		outlinePage = new FlexmiContentOutlinePage();
+		outlinePage = new FlexmiContentOutlinePage(this);
 		
 		final int delay = 1000;
 		
@@ -77,10 +80,16 @@ public class FlexmiEditor extends TextEditor {
 		parseModuleJob.setSystem(true);
 		parseModuleJob.schedule(delay);
 		
-		
+	}
+	
+	@Override
+	protected void doSetSelection(ISelection selection) {
+		super.doSetSelection(selection);
+		System.out.println(selection);
 	}
 	
 	public void parseModule() {
+		
 		// Return early if the file is opened in an unexpected editor (e.g. in a Subclipse RemoteFileEditor)
 		if (!(getEditorInput() instanceof FileEditorInput)) return;
 		
@@ -95,7 +104,6 @@ public class FlexmiEditor extends TextEditor {
 		String code = doc.get();
 		code = code.replaceAll("\t", " ");
 		SAXParseException parseException = null;
-		FlexmiResource resource = null;
 		
 		ResourceSet resourceSet = new ResourceSetImpl();
 		
@@ -123,7 +131,7 @@ public class FlexmiEditor extends TextEditor {
 				createMarker(parseException.getMessage(), parseException.getLineNumber(), true, file, markerType);
 			}
 			else {
-				for (ParseWarning warning : resource.getParseWarnings()) {
+				for (Diagnostic warning : resource.getWarnings()) {
 					createMarker(warning.getMessage(), warning.getLine(), false, file, markerType);
 				}
 				outlinePage.setResourceSet(resourceSet);
@@ -161,6 +169,10 @@ public class FlexmiEditor extends TextEditor {
 	public String getText() {
 		return this.getDocumentProvider().getDocument(
 				this.getEditorInput()).get();
+	}
+	
+	public FlexmiResource getResource() {
+		return resource;
 	}
 	
 	public void dispose() {

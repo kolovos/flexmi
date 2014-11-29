@@ -3,10 +3,13 @@ package org.eclipse.epsilon.flexmi;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Stack;
 
 import javax.xml.parsers.SAXParser;
@@ -37,10 +40,14 @@ public class FlexmiResource extends ResourceImpl {
 	
 	protected HashMap<String, List<EObject>> idCache = new HashMap<String, List<EObject>>();
 	protected List<UnresolvedReference> unresolvedReferences = new ArrayList<UnresolvedReference>();
-	protected List<ParseWarning> parseWarnings = new ArrayList<ParseWarning>();
+	//protected List<ParseWarning> parseWarnings = new ArrayList<ParseWarning>();
 	protected Stack<EObject> stack = new Stack<EObject>();
 	protected Locator locator = null;
 	protected List<String> scripts = new ArrayList<String>();
+	protected HashMap<String, EClass> eClassCache = new HashMap<String, EClass>();
+	protected HashMap<EClass, List<EClass>> allSubtypesCache = new HashMap<EClass, List<EClass>>();
+	protected HashMap<EObject, Integer> eObjectLineTrace = new HashMap<EObject, Integer>();
+	protected HashMap<Integer, EObject> lineEObjectTrace = new HashMap<Integer, EObject>();
 	
 	public static void main(String[] args) throws Exception {
 		
@@ -77,9 +84,13 @@ public class FlexmiResource extends ResourceImpl {
 	public void doLoadImpl(InputStream inputStream, Map<?, ?> options) throws Exception {
 		getContents().clear();
 		unresolvedReferences.clear();
-		parseWarnings.clear();
+		//parseWarnings.clear();
 		stack.clear();
 		scripts.clear();
+		eClassCache.clear();
+		allSubtypesCache.clear();
+		lineEObjectTrace.clear();
+		eObjectLineTrace.clear();
 		
 		SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();
 		DefaultHandler handler = new DefaultHandler() {
@@ -130,29 +141,48 @@ public class FlexmiResource extends ResourceImpl {
 						module.getContext().getModelRepository().addModel(new InMemoryEmfModel("M", FlexmiResource.this));
 						module.execute();
 					}
-					catch (Exception ex) {
-						//ex.printStackTrace(module.getContext().getErrorStream());
-					}
+					catch (Exception ex) {}
 				}
 			}
 		};
 		saxParser.parse(inputStream, handler);
 	}
 	
-	public List<ParseWarning> getParseWarnings() {
-		return parseWarnings;
-	}
-	
 	public List<UnresolvedReference> getUnresolvedReferences() {
 		return unresolvedReferences;
 	}
 	
-	protected void addParseWarning(String message) {
-		parseWarnings.add(new ParseWarning(locator.getLineNumber(), message));
+	protected void addParseWarning(final String message) {
+		addParseWarning(message, locator.getLineNumber());
+	}
+	
+	protected void addParseWarning(final String message, final int line) {
+		getWarnings().add(new Diagnostic() {
+			
+			@Override
+			public String getMessage() {
+				return message;
+			}
+			
+			@Override
+			public String getLocation() {
+				return FlexmiResource.this.getURI().toString();
+			}
+			
+			@Override
+			public int getLine() {
+				return line;
+			}
+			
+			@Override
+			public int getColumn() {
+				return 0;
+			}
+		});
 	}
 	
 	@SuppressWarnings("unchecked")
-	public void resolveReferences() {
+	protected void resolveReferences() {
 		
 		List<UnresolvedReference> resolvedReferences = new ArrayList<UnresolvedReference>();
 		
@@ -199,13 +229,13 @@ public class FlexmiResource extends ResourceImpl {
 		
 		unresolvedReferences.removeAll(resolvedReferences);
 		for (UnresolvedReference reference : unresolvedReferences) {
-			parseWarnings.add(new ParseWarning(reference.getLine(), "Could not resolve target " + reference.getValue() + " for reference " + reference.getAttributeName() + " (" + reference.getEReference().getName() + ")"));
+			addParseWarning("Could not resolve target " + reference.getValue() + " for reference " + reference.getAttributeName() + " (" + reference.getEReference().getName() + ")", reference.getLine());
 		}
 		idCache.clear();
 	}
 	
 	@SuppressWarnings("unchecked")
-	public void startElement(String uri, String localName, String name, Attributes attributes) throws SAXException {
+	protected void startElement(String uri, String localName, String name, Attributes attributes) throws SAXException {
 		EObject eObject = null;
 		EClass eClass = null;
 		
@@ -222,6 +252,7 @@ public class FlexmiResource extends ResourceImpl {
 			stack.push(eObject);
 		}
 		else {
+			
 			EObject parent = stack.peek();
 			
 			if (parent == null) {
@@ -232,12 +263,19 @@ public class FlexmiResource extends ResourceImpl {
 			
 			EReference containment = null;
 			
+			Set<EClass> candidates = new HashSet<EClass>();
 			for (EReference eReference : parent.eClass().getEAllContainments()) {
-				eClass = (EClass) eNamedElementForName(name, getAllSubtypes(eReference.getEReferenceType()));
-				if (eClass != null) {
-					containment = eReference;
-					break;
-				}				
+				candidates.addAll(getAllSubtypes(eReference.getEReferenceType()));				
+			}
+			
+			eClass = (EClass) eNamedElementForName(name, candidates);
+			if (eClass != null) {
+				for (EReference eReference : parent.eClass().getEAllContainments()) {
+					if (getAllSubtypes(eReference.getEReferenceType()).contains(eClass)) {
+						containment = eReference;
+						break;
+					}
+				}
 			}
 			
 			if (containment != null) {
@@ -259,13 +297,19 @@ public class FlexmiResource extends ResourceImpl {
 		
 	}
 	
-	public void endElement(String uri, String localName, String name) throws SAXException {
-		stack.pop();
+	protected void endElement(String uri, String localName, String name) throws SAXException {
+		EObject eObject = stack.pop();
+		if (eObject != null) {
+			eObjectLineTrace.put(eObject, locator.getLineNumber());
+			lineEObjectTrace.put(locator.getLineNumber(), eObject);
+		}
 	}
 	
 	protected void setAttributes(EObject eObject, Attributes attributes) {
 		
 		List<EStructuralFeature> eStructuralFeatures = getCandidateStructuralFeaturesForAttribute(eObject.eClass());
+		eObjectLineTrace.put(eObject, locator.getLineNumber());
+		lineEObjectTrace.put(locator.getLineNumber(), eObject);
 		
 		for (int i=0;i<attributes.getLength();i++) {
 			String name = attributes.getLocalName(i);
@@ -353,30 +397,42 @@ public class FlexmiResource extends ResourceImpl {
 		return eClasses;
 	}
 	
+	
 	protected List<EClass> getAllSubtypes(EClass eClass) {
-		List<EClass> allSubtypes = new ArrayList<EClass>();
-		for (EClass candidate : getAllConcreteEClasses()) {
-			if (candidate.getEAllSuperTypes().contains(eClass)) {
-				allSubtypes.add(candidate);
+		List<EClass> allSubtypes = allSubtypesCache.get(eClass);
+		if (allSubtypes == null) {
+			allSubtypes = new ArrayList<EClass>();
+			for (EClass candidate : getAllConcreteEClasses()) {
+				if (candidate.getEAllSuperTypes().contains(eClass)) {
+					allSubtypes.add(candidate);
+				}
 			}
+			allSubtypes.add(eClass);
+			allSubtypesCache.put(eClass, allSubtypes);
 		}
-		allSubtypes.add(eClass);
 		return allSubtypes;
 	}
-			
+	
 	protected EClass eClassForName(String name) {
-		return (EClass) eNamedElementForName(name, getAllConcreteEClasses());
+		EClass eClass = eClassCache.get(name);
+		if (eClass == null) {
+			eClass = (EClass) eNamedElementForName(name, getAllConcreteEClasses());
+			eClassCache.put(name, eClass);
+		}
+		return eClass;
+		
 	}
 	
-	protected ENamedElement eNamedElementForName(String name, List<? extends ENamedElement> candidates) {
+	protected ENamedElement eNamedElementForName(String name, Collection<? extends ENamedElement> candidates) {
 		ENamedElement eNamedElement = eNamedElementForName(name, candidates, false);
 		if (eNamedElement == null) eNamedElement = eNamedElementForName(name, candidates, true);
 		return eNamedElement;
 	}
 	
-	protected ENamedElement eNamedElementForName(String name, List<? extends ENamedElement> candidates, boolean fuzzy) {
+	protected ENamedElement eNamedElementForName(String name, Collection<? extends ENamedElement> candidates, boolean fuzzy) {
 		
 		if (fuzzy) {
+			System.out.println(name + candidates);
 			int maxLongestSubstring = 2;
 			ENamedElement bestMatch = null;
 			for (ENamedElement candidate : candidates) {
@@ -397,7 +453,15 @@ public class FlexmiResource extends ResourceImpl {
 		return null;
 	}
 	
-	public int longestSubstring(String first, String second) {
+	public HashMap<EObject, Integer> getEObjectLineTrace() {
+		return eObjectLineTrace;
+	}
+	
+	public HashMap<Integer, EObject> getLineEObjectTrace() {
+		return lineEObjectTrace;
+	}
+	
+	protected int longestSubstring(String first, String second) {
 		if (first == null || second == null || first.length() == 0 || second.length() == 0) return 0;
 
 		int maxLen = 0;
