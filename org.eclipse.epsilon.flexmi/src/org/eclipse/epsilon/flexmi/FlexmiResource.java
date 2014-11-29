@@ -40,6 +40,7 @@ public class FlexmiResource extends ResourceImpl {
 	protected List<ParseWarning> parseWarnings = new ArrayList<ParseWarning>();
 	protected Stack<EObject> stack = new Stack<EObject>();
 	protected Locator locator = null;
+	protected List<String> scripts = new ArrayList<String>();
 	
 	public static void main(String[] args) throws Exception {
 		
@@ -78,6 +79,7 @@ public class FlexmiResource extends ResourceImpl {
 		unresolvedReferences.clear();
 		parseWarnings.clear();
 		stack.clear();
+		scripts.clear();
 		
 		SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();
 		DefaultHandler handler = new DefaultHandler() {
@@ -109,11 +111,29 @@ public class FlexmiResource extends ResourceImpl {
 					if (ePackage != null) getResourceSet().getPackageRegistry().put(ePackage.getNsURI(), ePackage);
 					else addParseWarning("Failed to locate EPackage for nsURI " + value + " ");
 				}
+				else if ("eol".equalsIgnoreCase(key)) {
+					scripts.add(value);
+				}
 			}
 			
 			@Override
 			public void endDocument() throws SAXException {
 				resolveReferences();
+				for (String script : scripts) {
+					EolModule module = new EolModule();
+					try {
+						module.parse(script);
+						if (!module.getParseProblems().isEmpty()) {
+							addParseWarning(module.getParseProblems().get(0).toString());
+							return;
+						}
+						module.getContext().getModelRepository().addModel(new InMemoryEmfModel("M", FlexmiResource.this));
+						module.execute();
+					}
+					catch (Exception ex) {
+						//ex.printStackTrace(module.getContext().getErrorStream());
+					}
+				}
 			}
 		};
 		saxParser.parse(inputStream, handler);
@@ -137,21 +157,20 @@ public class FlexmiResource extends ResourceImpl {
 		List<UnresolvedReference> resolvedReferences = new ArrayList<UnresolvedReference>();
 		
 		for (UnresolvedReference unresolvedReference : unresolvedReferences) {
-			
 			EReference eReference = unresolvedReference.getEReference();
 			if (eReference.isMany()) {
-				for (String value : unresolvedReference.getValue().split(",")) {
-					List<EObject> candidates = idCache.get(value.trim());
-					if (candidates != null) {
-						for (EObject candidate : candidates) {
-							if (eReference.getEReferenceType().isInstance(candidate)) {
-								((List<EObject>) unresolvedReference.getEObject().eGet(eReference)).add(candidate);
-								resolvedReferences.add(unresolvedReference);
-								break;
-							}
+				
+				List<EObject> candidates = idCache.get(unresolvedReference.getValue());
+				if (candidates != null) {
+					for (EObject candidate : candidates) {
+						if (eReference.getEReferenceType().isInstance(candidate)) {
+							((List<EObject>) unresolvedReference.getEObject().eGet(eReference)).add(candidate);
+							resolvedReferences.add(unresolvedReference);
+							break;
 						}
 					}
 				}
+				
 			}
 			else {
 				List<EObject> candidates = idCache.get(unresolvedReference.getValue());
@@ -169,7 +188,7 @@ public class FlexmiResource extends ResourceImpl {
 		
 		unresolvedReferences.removeAll(resolvedReferences);
 		for (UnresolvedReference reference : unresolvedReferences) {
-			parseWarnings.add(new ParseWarning(reference.getLine(), "Could not resolve target(s) for reference " + reference.getAttributeName()));
+			parseWarnings.add(new ParseWarning(reference.getLine(), "Could not resolve target " + reference.getValue() + " for reference " + reference.getAttributeName()));
 		}
 		idCache.clear();
 	}
@@ -250,7 +269,14 @@ public class FlexmiResource extends ResourceImpl {
 				}
 				else if (sf instanceof EReference) {
 					EReference eReference = (EReference) sf;
-					unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, value, locator.getLineNumber()));
+					if (eReference.isMany()) {
+						for (String valuePart : value.split(",")) {
+							unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, valuePart.trim(), locator.getLineNumber()));
+						}
+					}
+					else {
+						unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, value, locator.getLineNumber()));
+					}
 				}
 			}
 			else {

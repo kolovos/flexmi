@@ -48,7 +48,6 @@ public class FlexmiEditor extends TextEditor {
 		
 		//outlinePage = createOutlinePage();
 		
-		
 		final int delay = 1000;
 		
 		parseModuleJob = new Job("Parsing module") {
@@ -101,7 +100,6 @@ public class FlexmiEditor extends TextEditor {
 			resource.load(new ByteArrayInputStream(code.getBytes()), null);
 		}
 		catch (Exception ex) {
-			ex.printStackTrace();
 			if (ex instanceof RuntimeException) {
 				if (ex.getCause() instanceof SAXParseException) {
 					parseException = (SAXParseException) ex.getCause();
@@ -112,12 +110,10 @@ public class FlexmiEditor extends TextEditor {
 		final String markerType = "org.eclipse.epsilon.flexmi.dt.problemmarker";
 		
 		// Update problem markers
-		// TODO: Update problem markers in all referenced files
 		try {
 			file.deleteMarkers(markerType, true, IResource.DEPTH_INFINITE);
 			
 			if (parseException != null) {
-				System.out.println("Creating error");
 				createMarker(parseException.getMessage(), parseException.getLineNumber(), true, file, markerType);
 			}
 			else {
