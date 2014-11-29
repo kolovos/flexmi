@@ -8,9 +8,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Stack;
-import java.util.logging.Level;
 
-import javax.swing.plaf.basic.BasicInternalFrameTitlePane.MaximizeAction;
 import javax.xml.parsers.SAXParser;
 import javax.xml.parsers.SAXParserFactory;
 
@@ -33,14 +31,15 @@ import org.eclipse.epsilon.eol.EolModule;
 import org.xml.sax.Attributes;
 import org.xml.sax.Locator;
 import org.xml.sax.SAXException;
-import org.xml.sax.ext.Locator2;
 import org.xml.sax.helpers.DefaultHandler;
 
 public class FlexmiResource extends ResourceImpl {
 	
 	protected HashMap<String, List<EObject>> idCache = new HashMap<String, List<EObject>>();
 	protected List<UnresolvedReference> unresolvedReferences = new ArrayList<UnresolvedReference>();
+	protected List<ParseWarning> parseWarnings = new ArrayList<ParseWarning>();
 	protected Stack<EObject> stack = new Stack<EObject>();
+	protected Locator locator = null;
 	
 	public static void main(String[] args) throws Exception {
 		
@@ -61,9 +60,10 @@ public class FlexmiResource extends ResourceImpl {
 	}
 	
 	@Override
-	public void load(Map<?, ?> options) throws IOException {
+	protected void doLoad(InputStream inputStream, Map<?, ?> options)
+			throws IOException {
 		try {
-			loadImpl(options);
+			doLoadImpl(inputStream, options);
 		}
 		catch (IOException ioException) {
 			throw ioException;
@@ -73,14 +73,19 @@ public class FlexmiResource extends ResourceImpl {
 		}
 	}
 	
-	public void loadImpl(Map<?, ?> options) throws Exception {
+	public void doLoadImpl(InputStream inputStream, Map<?, ?> options) throws Exception {
 		getContents().clear();
 		unresolvedReferences.clear();
+		parseWarnings.clear();
 		stack.clear();
 		
-		InputStream inputStream = getURIConverter().createInputStream(uri);
 		SAXParser saxParser = SAXParserFactory.newInstance().newSAXParser();
 		DefaultHandler handler = new DefaultHandler() {
+			
+			@Override
+			public void setDocumentLocator(Locator locator) {
+				FlexmiResource.this.locator = locator;
+			}
 			
 			@Override
 			public void startDocument() throws SAXException {}
@@ -99,10 +104,10 @@ public class FlexmiResource extends ResourceImpl {
 			@Override
 			public void processingInstruction(String key, String value)
 					throws SAXException {
-				System.out.println(key +"->" + value);
-				if ("nsuri".equals(key)) {
+				if ("nsuri".equalsIgnoreCase(key)) {
 					EPackage ePackage = EPackage.Registry.INSTANCE.getEPackage(value);
 					if (ePackage != null) getResourceSet().getPackageRegistry().put(ePackage.getNsURI(), ePackage);
+					else addParseWarning("Failed to locate EPackage for nsURI " + value + " ");
 				}
 			}
 			
@@ -112,6 +117,18 @@ public class FlexmiResource extends ResourceImpl {
 			}
 		};
 		saxParser.parse(inputStream, handler);
+	}
+	
+	public List<ParseWarning> getParseWarnings() {
+		return parseWarnings;
+	}
+	
+	public List<UnresolvedReference> getUnresolvedReferences() {
+		return unresolvedReferences;
+	}
+	
+	protected void addParseWarning(String message) {
+		parseWarnings.add(new ParseWarning(locator.getLineNumber(), message));
 	}
 	
 	@SuppressWarnings("unchecked")
@@ -151,6 +168,9 @@ public class FlexmiResource extends ResourceImpl {
 		}
 		
 		unresolvedReferences.removeAll(resolvedReferences);
+		for (UnresolvedReference reference : unresolvedReferences) {
+			parseWarnings.add(new ParseWarning(reference.getLine(), "Could not resolve target(s) for reference " + reference.getAttributeName()));
+		}
 		idCache.clear();
 	}
 	
@@ -158,6 +178,7 @@ public class FlexmiResource extends ResourceImpl {
 	public void startElement(String uri, String localName, String name, Attributes attributes) throws SAXException {
 		EObject eObject = null;
 		EClass eClass = null;
+		
 		if (stack.isEmpty()) {
 			eClass = eClassForName(name);
 			if (eClass != null) {
@@ -165,29 +186,48 @@ public class FlexmiResource extends ResourceImpl {
 				getContents().add(eObject);
 				setAttributes(eObject, attributes);
 			}
+			else {
+				addParseWarning("Could not map element " + name + " to an EObject");
+			}
 			stack.push(eObject);
 		}
 		else {
 			EObject parent = stack.peek();
+			
+			if (parent == null) {
+				stack.push(null);
+				addParseWarning("Could not map element " + name + " to an EObject");
+				return;
+			}
+			
+			EReference containment = null;
+			
 			for (EReference eReference : parent.eClass().getEAllContainments()) {
 				eClass = (EClass) eNamedElementForName(name, getAllSubtypes(eReference.getEReferenceType()));
 				if (eClass != null) {
-					eObject = eClass.getEPackage().getEFactoryInstance().create(eClass);
-					if (eReference.isMany()) {
-						((List<EObject>) parent.eGet(eReference)).add(eObject);
-					}
-					else {
-						parent.eSet(eReference, eObject);
-					}
-					setAttributes(eObject, attributes);
-					stack.push(eObject);
+					containment = eReference;
 					break;
 				}
-				else {
-					stack.push(null);
+				
+			}
+			
+			if (containment != null) {
+				eObject = eClass.getEPackage().getEFactoryInstance().create(eClass);
+				if (containment.isMany()) {
+					((List<EObject>) parent.eGet(containment)).add(eObject);
 				}
+				else {
+					parent.eSet(containment, eObject);
+				}
+				setAttributes(eObject, attributes);
+				stack.push(eObject);
+			}
+			else {
+				stack.push(null);
+				addParseWarning("Could not map element " + name + " to an EObject");
 			}
 		}
+		
 	}
 	
 	public void endElement(String uri, String localName, String name) throws SAXException {
@@ -206,27 +246,50 @@ public class FlexmiResource extends ResourceImpl {
 			if (sf != null) {
 				eStructuralFeatures.remove(sf);
 				if (sf instanceof EAttribute) {
-					EAttribute eAttribute = (EAttribute) sf;
-					Object eValue = eAttribute.getEAttributeType().getEPackage().getEFactoryInstance().createFromString(eAttribute.getEAttributeType(), value);
-					eObject.eSet(eAttribute, eValue);
-					if (eAttribute.isID() || "name".equalsIgnoreCase(eAttribute.getName())) {
-						List<EObject> eObjects = idCache.get(value);
-						if (eObjects == null) {
-							eObjects = new ArrayList<EObject>();
-							idCache.put(value, eObjects);
-						}
-						eObjects.add(eObject);
-					}
+					setEAttributeValue(eObject, (EAttribute) sf, name, value);
 				}
 				else if (sf instanceof EReference) {
 					EReference eReference = (EReference) sf;
-					UnresolvedReference unresolvedReference = new UnresolvedReference();
-					unresolvedReference.setEObject(eObject);
-					unresolvedReference.seteReference(eReference);
-					unresolvedReference.setValue(value);
-					unresolvedReferences.add(unresolvedReference);
+					unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, value, locator.getLineNumber()));
 				}
 			}
+			else {
+				addParseWarning("Could not map attribute " + name + " to a structural feature of " + eObject.eClass().getName());
+			}
+		}
+	}
+	
+	@SuppressWarnings("unchecked")
+	protected void setEAttributeValue(EObject eObject, EAttribute eAttribute, String attributeName, String value) {
+		if (eAttribute.isMany()) {
+			for (String valuePart : value.split(",")) {
+				Object eValue = getEValue(eAttribute, attributeName, valuePart.trim());
+				if (eValue == null) continue;
+				((List<Object>) eObject.eGet(eAttribute)).add(eValue);
+			}
+		}
+		else {
+			Object eValue = getEValue(eAttribute, attributeName, value);
+			if (eValue == null) return;
+			eObject.eSet(eAttribute, eValue);
+			if (eAttribute.isID() || "name".equalsIgnoreCase(eAttribute.getName())) {
+				List<EObject> eObjects = idCache.get(value);
+				if (eObjects == null) {
+					eObjects = new ArrayList<EObject>();
+					idCache.put(value, eObjects);
+				}
+				eObjects.add(eObject);
+			}
+		}
+	}
+	
+	protected Object getEValue(EAttribute eAttribute, String attributeName, String value) {
+		try {
+			return eAttribute.getEAttributeType().getEPackage().getEFactoryInstance().createFromString(eAttribute.getEAttributeType(), value);
+		}
+		catch (Exception ex) {
+			addParseWarning(ex.getMessage() + " in the value of " + attributeName);
+			return null;
 		}
 	}
 	

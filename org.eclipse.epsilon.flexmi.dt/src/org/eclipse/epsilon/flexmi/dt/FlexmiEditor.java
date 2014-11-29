@@ -1,10 +1,8 @@
 package org.eclipse.epsilon.flexmi.dt;
 
-import java.io.File;
+import java.io.ByteArrayInputStream;
 import java.util.HashMap;
 import java.util.Map;
-
-import javax.print.attribute.standard.Severity;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IMarker;
@@ -14,14 +12,22 @@ import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.jobs.Job;
+import org.eclipse.emf.common.util.URI;
+import org.eclipse.emf.ecore.EcorePackage;
+import org.eclipse.emf.ecore.resource.Resource;
+import org.eclipse.emf.ecore.resource.ResourceSet;
+import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
+import org.eclipse.epsilon.flexmi.FlexmiResource;
+import org.eclipse.epsilon.flexmi.FlexmiResourceFactory;
+import org.eclipse.epsilon.flexmi.ParseWarning;
 import org.eclipse.jface.text.IDocument;
-import org.eclipse.jface.text.Region;
 import org.eclipse.ui.IEditorInput;
 import org.eclipse.ui.IEditorSite;
 import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.editors.text.TextEditor;
 import org.eclipse.ui.part.FileEditorInput;
 import org.eclipse.ui.texteditor.MarkerUtilities;
+import org.xml.sax.SAXParseException;
 
 public class FlexmiEditor extends TextEditor {
 
@@ -84,9 +90,24 @@ public class FlexmiEditor extends TextEditor {
 		// column numbers produced by the parser
 		String code = doc.get();
 		code = code.replaceAll("\t", " ");
+		SAXParseException parseException = null;
+		FlexmiResource resource = null;
 		
-		System.out.println(code);
-		// TODO: Parse here
+		try {
+			ResourceSet resourceSet = new ResourceSetImpl();
+			resourceSet.getPackageRegistry().put(EcorePackage.eINSTANCE.getNsURI(), EcorePackage.eINSTANCE);
+			resourceSet.getResourceFactoryRegistry().getExtensionToFactoryMap().put("*", new FlexmiResourceFactory());
+			resource = (FlexmiResource) resourceSet.createResource(URI.createFileURI(file.getLocation().toOSString()));
+			resource.load(new ByteArrayInputStream(code.getBytes()), null);
+		}
+		catch (Exception ex) {
+			ex.printStackTrace();
+			if (ex instanceof RuntimeException) {
+				if (ex.getCause() instanceof SAXParseException) {
+					parseException = (SAXParseException) ex.getCause();
+				}
+			}
+		}
 		
 		final String markerType = "org.eclipse.epsilon.flexmi.dt.problemmarker";
 		
@@ -95,18 +116,30 @@ public class FlexmiEditor extends TextEditor {
 		try {
 			file.deleteMarkers(markerType, true, IResource.DEPTH_INFINITE);
 			
-			Map<String, Object> attr = new HashMap<String, Object>();
-			attr.put(IMarker.LINE_NUMBER, new Integer(1));
-			attr.put(IMarker.MESSAGE, "Horrible things happened");				
-			int markerSeverity;
-			markerSeverity = IMarker.SEVERITY_ERROR;
-			attr.put(IMarker.SEVERITY, markerSeverity);
-			MarkerUtilities.createMarker(file, attr, markerType);
+			if (parseException != null) {
+				System.out.println("Creating error");
+				createMarker(parseException.getMessage(), parseException.getLineNumber(), true, file, markerType);
+			}
+			else {
+				for (ParseWarning warning : resource.getParseWarnings()) {
+					createMarker(warning.getMessage(), warning.getLine(), false, file, markerType);
+				}
+			}
 			
 		} catch (CoreException e1) {
 			e1.printStackTrace();
 		}
 		
+	}
+	
+	protected void createMarker(String message, int lineNumber, boolean error, IFile file, String markerType) throws CoreException {
+		Map<String, Object> attr = new HashMap<String, Object>();
+		attr.put(IMarker.LINE_NUMBER, lineNumber);
+		attr.put(IMarker.MESSAGE, message);				
+		int markerSeverity = IMarker.SEVERITY_WARNING;
+		if (error) markerSeverity = IMarker.SEVERITY_ERROR;
+		attr.put(IMarker.SEVERITY, markerSeverity);
+		MarkerUtilities.createMarker(file, attr, markerType);
 	}
 	
 	public boolean isClosed() {
