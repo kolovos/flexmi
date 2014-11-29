@@ -27,12 +27,14 @@ import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.editors.text.TextEditor;
 import org.eclipse.ui.part.FileEditorInput;
 import org.eclipse.ui.texteditor.MarkerUtilities;
+import org.eclipse.ui.views.contentoutline.IContentOutlinePage;
 import org.xml.sax.SAXParseException;
 
 public class FlexmiEditor extends TextEditor {
 
 	private ColorManager colorManager;
 	protected Job parseModuleJob = null;
+	protected FlexmiContentOutlinePage outlinePage = null;
 	
 	public FlexmiEditor() {
 		super();
@@ -46,7 +48,7 @@ public class FlexmiEditor extends TextEditor {
 			throws PartInitException {
 		super.init(site, input);
 		
-		//outlinePage = createOutlinePage();
+		outlinePage = new FlexmiContentOutlinePage();
 		
 		final int delay = 1000;
 		
@@ -73,6 +75,8 @@ public class FlexmiEditor extends TextEditor {
 		
 		parseModuleJob.setSystem(true);
 		parseModuleJob.schedule(delay);
+		
+		
 	}
 	
 	public void parseModule() {
@@ -92,8 +96,9 @@ public class FlexmiEditor extends TextEditor {
 		SAXParseException parseException = null;
 		FlexmiResource resource = null;
 		
+		ResourceSet resourceSet = new ResourceSetImpl();
+		
 		try {
-			ResourceSet resourceSet = new ResourceSetImpl();
 			resourceSet.getPackageRegistry().put(EcorePackage.eINSTANCE.getNsURI(), EcorePackage.eINSTANCE);
 			resourceSet.getResourceFactoryRegistry().getExtensionToFactoryMap().put("*", new FlexmiResourceFactory());
 			resource = (FlexmiResource) resourceSet.createResource(URI.createFileURI(file.getLocation().toOSString()));
@@ -120,12 +125,23 @@ public class FlexmiEditor extends TextEditor {
 				for (ParseWarning warning : resource.getParseWarnings()) {
 					createMarker(warning.getMessage(), warning.getLine(), false, file, markerType);
 				}
+				outlinePage.setResourceSet(resourceSet);
 			}
 			
 		} catch (CoreException e1) {
 			e1.printStackTrace();
 		}
 		
+	}
+	
+	@SuppressWarnings("rawtypes")
+	@Override
+	public Object getAdapter(Class required) {
+		if (IContentOutlinePage.class.equals(required)) {
+			return outlinePage;
+		}
+
+		return super.getAdapter(required);
 	}
 	
 	protected void createMarker(String message, int lineNumber, boolean error, IFile file, String markerType) throws CoreException {
