@@ -1,5 +1,7 @@
 package org.eclipse.epsilon.flexmi;
 
+import java.util.Collection;
+
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EReference;
 
@@ -58,6 +60,16 @@ public class UnresolvedReference {
 	
 	public void setAttributeName(String attributeName) {
 		this.attributeName = attributeName;
+	}
+	
+	public boolean resolve(Collection<EObject> candidates) {
+		for (EObject candidate : candidates) {
+			if (eReference.getEReferenceType().isInstance(candidate)) {
+				new EReferenceSlot(eReference, getEObject()).newValue(candidate);
+				return true;
+			}
+		}
+		return false;
 	}
 	
 }

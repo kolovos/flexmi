@@ -70,7 +70,7 @@ public class FlexmiContentOutlinePage extends ContentOutlinePage {
 			try {
 			if (selection instanceof TextSelection) {
 				TextSelection textSelection = (TextSelection) selection;
-				EObject eObject = editor.getResource().getLineEObjectTrace().get(textSelection.getStartLine()+1);
+				EObject eObject = editor.getResource().getEObjectTraceManager().getEObject(textSelection.getStartLine()+1);
 				if (eObject != null) {
 					getTreeViewer().setSelection(new StructuredSelection(eObject), true);
 				}

@@ -32,6 +32,7 @@ import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.epsilon.emc.emf.InMemoryEmfModel;
 import org.eclipse.epsilon.eol.EolModule;
 import org.xml.sax.Attributes;
+import org.xml.sax.HandlerBase;
 import org.xml.sax.Locator;
 import org.xml.sax.SAXException;
 import org.xml.sax.helpers.DefaultHandler;
@@ -42,17 +43,17 @@ public class FlexmiResource extends ResourceImpl {
 	public static final String OPTION_ORPHANS_AS_TOP_LEVEL = "orphansAsTopLevel";
 	public static final String OPTION_FUZZY_MATCHING_THRESHOLD = "fuzzyMatchingThreshold";
 	
-	protected HashMap<String, List<EObject>> idCache = new HashMap<String, List<EObject>>();
+	protected EObjectIdManager eObjectIdManager = new EObjectIdManager();
+	protected EObjectTraceManager eObjectTraceManager = new EObjectTraceManager();
 	protected List<UnresolvedReference> unresolvedReferences = new ArrayList<UnresolvedReference>();
 	protected Stack<Object> stack = new Stack<Object>();
 	protected Locator locator = null;
 	protected List<String> scripts = new ArrayList<String>();
 	protected HashMap<String, EClass> eClassCache = new HashMap<String, EClass>();
 	protected HashMap<EClass, List<EClass>> allSubtypesCache = new HashMap<EClass, List<EClass>>();
-	protected HashMap<EObject, Integer> eObjectLineTrace = new HashMap<EObject, Integer>();
-	protected HashMap<Integer, EObject> lineEObjectTrace = new HashMap<Integer, EObject>();
+	
 	protected boolean fuzzyContainmentSlotMatching = true;
-	protected boolean orphanAsTopLevel = false;
+	protected boolean orphansAsTopLevel = false;
 	protected int fuzzyMatchingThreshold = 2;
 	
 	public static void main(String[] args) throws Exception {
@@ -80,9 +81,11 @@ public class FlexmiResource extends ResourceImpl {
 			doLoadImpl(inputStream, options);
 		}
 		catch (IOException ioException) {
+			ioException.printStackTrace();
 			throw ioException;
 		}
 		catch (Exception ex) {
+			ex.printStackTrace();
 			throw new RuntimeException(ex);
 		}
 	}
@@ -93,7 +96,7 @@ public class FlexmiResource extends ResourceImpl {
 				fuzzyContainmentSlotMatching = Boolean.parseBoolean(value);
 			}
 			else if (OPTION_ORPHANS_AS_TOP_LEVEL.equalsIgnoreCase(key)) {
-				orphanAsTopLevel = Boolean.parseBoolean(value);
+				orphansAsTopLevel = Boolean.parseBoolean(value);
 			}
 			else if (OPTION_FUZZY_MATCHING_THRESHOLD.equalsIgnoreCase(key)) {
 				fuzzyMatchingThreshold = Integer.parseInt(value);
@@ -101,7 +104,7 @@ public class FlexmiResource extends ResourceImpl {
 			else throw new Exception("Unknown option");
 		}
 		catch (Exception ex) {
-			addParseWarning("Unsupported option " + key + ": " + ex.getMessage());
+			addParseWarning("Could not process option " + key + ": " + ex.getMessage());
 		}
 	}
 	
@@ -112,8 +115,7 @@ public class FlexmiResource extends ResourceImpl {
 		scripts.clear();
 		eClassCache.clear();
 		allSubtypesCache.clear();
-		lineEObjectTrace.clear();
-		eObjectLineTrace.clear();
+		eObjectIdManager = new EObjectIdManager();
 		
 		if (options != null) {
 			for (Object key : options.keySet()) {
@@ -206,35 +208,17 @@ public class FlexmiResource extends ResourceImpl {
 					while (it.hasNext()) {
 						EObject candidate = it.next();
 						if (eReference.getEReferenceType().isInstance(candidate)) {
-							((List<EObject>) unresolvedReference.getEObject().eGet(eReference)).add(candidate);
+							new EReferenceSlot(eReference, unresolvedReference.getEObject()).newValue(candidate);
 						}
 					}
 					resolvedReferences.add(unresolvedReference);
 				}
 				else {
-					List<EObject> candidates = idCache.get(unresolvedReference.getValue());
-					if (candidates != null) {
-						for (EObject candidate : candidates) {
-							if (eReference.getEReferenceType().isInstance(candidate)) {
-								((List<EObject>) unresolvedReference.getEObject().eGet(eReference)).add(candidate);
-								resolvedReferences.add(unresolvedReference);
-								break;
-							}
-						}
-					}
+					resolveReference(unresolvedReference, resolvedReferences);
 				}
 			}
 			else {
-				List<EObject> candidates = idCache.get(unresolvedReference.getValue());
-				if (candidates != null) {
-					for (EObject candidate : candidates) {
-						if (eReference.getEReferenceType().isInstance(candidate)) {
-							unresolvedReference.getEObject().eSet(eReference, candidate);
-							resolvedReferences.add(unresolvedReference);
-							break;
-						}
-					}
-				}
+				resolveReference(unresolvedReference, resolvedReferences);
 			}
 		}
 		
@@ -242,12 +226,21 @@ public class FlexmiResource extends ResourceImpl {
 		for (UnresolvedReference reference : unresolvedReferences) {
 			addParseWarning("Could not resolve target " + reference.getValue() + " for reference " + reference.getAttributeName() + " (" + reference.getEReference().getName() + ")", reference.getLine());
 		}
-		idCache.clear();
+		eObjectIdManager = new EObjectIdManager();
 	}
 	
+	protected void resolveReference(UnresolvedReference unresolvedReference, List<UnresolvedReference> resolvedReferences) {
+		List<EObject> candidates = eObjectIdManager.getEObjectsById(unresolvedReference.getValue());
+		if (unresolvedReference.resolve(candidates)) {
+			resolvedReferences.add(unresolvedReference);
+		}
+	}
+		
 	@SuppressWarnings("unchecked")
 	protected void startElement(String uri, String localName, String name, Attributes attributes) throws SAXException {
 		
+		//Remove prefixes
+		//TODO: Add option to disable this
 		if (name.indexOf(":") > -1) {
 			name = name.substring(name.indexOf(":")+1);
 		}
@@ -256,7 +249,7 @@ public class FlexmiResource extends ResourceImpl {
 		EClass eClass = null;
 		
 		// We're at the root or we treat orphan elements as top-level
-		if (stack.isEmpty() || (stack.peek() == null && orphanAsTopLevel)) {
+		if (stack.isEmpty() || (stack.peek() == null && orphansAsTopLevel)) {
 			eClass = eClassForName(name);
 			if (eClass != null) {
 				eObject = eClass.getEPackage().getEFactoryInstance().create(eClass);
@@ -280,8 +273,8 @@ public class FlexmiResource extends ResourceImpl {
 				}
 			}
 			// The parent is an already-established containment slot
-			else if (peek instanceof ContainmentSlot) {
-				ContainmentSlot containmentSlot = (ContainmentSlot) peek;
+			else if (peek instanceof EReferenceSlot) {
+				EReferenceSlot containmentSlot = (EReferenceSlot) peek;
 				eClass = (EClass) eNamedElementForName(name, getAllSubtypes(containmentSlot.getEReference().getEReferenceType()));
 				
 				if (eClass != null) {
@@ -310,7 +303,7 @@ public class FlexmiResource extends ResourceImpl {
 						containment = (EReference) eNamedElementForName(name, parent.eClass().getEAllContainments(), false);				
 					}
 					if (containment != null) {
-						ContainmentSlot containmentSlot = new ContainmentSlot(containment, parent);
+						EReferenceSlot containmentSlot = new EReferenceSlot(containment, parent);
 						stack.push(containmentSlot);
 						return;
 					}
@@ -361,19 +354,14 @@ public class FlexmiResource extends ResourceImpl {
 		Object object = stack.pop();
 		if (object != null && object instanceof EObject) {
 			EObject eObject = (EObject) object;
-			trace(eObject, locator.getLineNumber());
+			eObjectTraceManager.trace(eObject, locator.getLineNumber());
 		}
-	}
-	
-	protected void trace(EObject eObject, int line) {
-		eObjectLineTrace.put(eObject, line);
-		lineEObjectTrace.put(line, eObject);
 	}
 	
 	protected void setAttributes(EObject eObject, Attributes attributes) {
 		
 		List<EStructuralFeature> eStructuralFeatures = getCandidateStructuralFeaturesForAttribute(eObject.eClass());
-		trace(eObject, locator.getLineNumber());
+		eObjectTraceManager.trace(eObject, locator.getLineNumber());
 		
 		for (int i=0;i<attributes.getLength();i++) {
 			String name = attributes.getLocalName(i);
@@ -417,12 +405,7 @@ public class FlexmiResource extends ResourceImpl {
 			if (eValue == null) return;
 			eObject.eSet(eAttribute, eValue);
 			if (eAttribute.isID() || "name".equalsIgnoreCase(eAttribute.getName())) {
-				List<EObject> eObjects = idCache.get(value);
-				if (eObjects == null) {
-					eObjects = new ArrayList<EObject>();
-					idCache.put(value, eObjects);
-				}
-				eObjects.add(eObject);
+				eObjectIdManager.setEObjectId(eObject, value);
 			}
 		}
 	}
@@ -471,7 +454,7 @@ public class FlexmiResource extends ResourceImpl {
 					allSubtypes.add(candidate);
 				}
 			}
-			allSubtypes.add(eClass);
+			if (!eClass.isAbstract()) allSubtypes.add(eClass);
 			allSubtypesCache.put(eClass, allSubtypes);
 		}
 		return allSubtypes;
@@ -491,6 +474,10 @@ public class FlexmiResource extends ResourceImpl {
 		ENamedElement eNamedElement = eNamedElementForName(name, candidates, false);
 		if (eNamedElement == null) eNamedElement = eNamedElementForName(name, candidates, true);
 		return eNamedElement;
+	}
+	
+	public EObjectTraceManager getEObjectTraceManager() {
+		return eObjectTraceManager;
 	}
 	
 	protected ENamedElement eNamedElementForName(String name, Collection<? extends ENamedElement> candidates, boolean fuzzy) {
@@ -514,14 +501,6 @@ public class FlexmiResource extends ResourceImpl {
 		}
 		
 		return null;
-	}
-	
-	public HashMap<EObject, Integer> getEObjectLineTrace() {
-		return eObjectLineTrace;
-	}
-	
-	public HashMap<Integer, EObject> getLineEObjectTrace() {
-		return lineEObjectTrace;
 	}
 	
 	protected int longestSubstring(String first, String second) {
