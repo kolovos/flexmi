@@ -7,4 +7,5 @@ Bundle-RequiredExecutionEnvironment: JavaSE-1.6
 Require-Bundle: org.eclipse.emf.ecore;visibility:=reexport,
  org.eclipse.epsilon.eol.engine;resolution:=optional,
  org.eclipse.epsilon.emc.emf;resolution:=optional
-Export-Package: org.eclipse.epsilon.flexmi
+Export-Package: org.eclipse.epsilon.flexmi,
+ org.eclipse.epsilon.flexmi.xml
