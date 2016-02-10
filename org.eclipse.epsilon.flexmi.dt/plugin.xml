@@ -23,4 +23,19 @@
             value="true">
       </persistent>
    </extension>
+ <extension
+       point="org.eclipse.ui.popupMenus">
+    <objectContribution
+          adaptable="true"
+          id="org.eclipse.epsilon.flexmi.dt.contribution1"
+          nameFilter="*.flexmi"
+          objectClass="org.eclipse.core.resources.IFile">
+       <action
+             class="org.eclipse.epsilon.flexmi.dt.GenerateXMIAction"
+             enablesFor="1"
+             id="org.eclipse.epsilon.flexmi.dt.GenerateXMIAction"
+             label="Generate XMI">
+       </action>
+    </objectContribution>
+ </extension>
 </plugin>

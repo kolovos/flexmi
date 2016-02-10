@@ -87,7 +87,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 			throw ioException;
 		}
 		catch (Exception ex) {
-			ex.printStackTrace();
+			//ex.printStackTrace();
 			throw new RuntimeException(ex);
 		}
 	}
@@ -164,11 +164,9 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 			
 			// We find an orphan elmeent but don't treat it as top-level
 			if (peek == null) {
-				if (peek == null) {
-					stack.push(null);
-					addParseWarning("Could not map element " + name + " to an EObject");
-					return;
-				}
+				stack.push(null);
+				addParseWarning("Could not map element " + name + " to an EObject");
+				return;
 			}
 			// The parent is an already-established containment slot
 			else if (peek instanceof EReferenceSlot) {
@@ -195,6 +193,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 					
 					if (eAttribute != null) {
 						setEAttributeValue(parent, eAttribute, name, element.getTextContent().trim());
+						eObjectTraceManager.trace(parent, getLineNumber(element));
 						stack.push(null);
 						return;
 					}
@@ -212,6 +211,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 					}
 					if (containment != null) {
 						EReferenceSlot containmentSlot = new EReferenceSlot(containment, parent);
+						eObjectTraceManager.trace(parent, getLineNumber(element));
 						stack.push(containmentSlot);
 						return;
 					}

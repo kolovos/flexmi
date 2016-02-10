@@ -17,4 +17,8 @@ public class EObjectTraceManager {
 	public EObject getEObject(int line) {
 		return lineEObjectTrace.get(line);
 	}
+	
+	public int getLine(EObject eObject) {
+		return eObjectLineTrace.get(eObject);
+	}
 }

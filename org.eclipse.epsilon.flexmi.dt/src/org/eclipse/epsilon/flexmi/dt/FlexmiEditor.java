@@ -4,6 +4,8 @@ import java.io.ByteArrayInputStream;
 import java.util.HashMap;
 import java.util.Map;
 
+import javax.xml.transform.TransformerException;
+
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IResource;
@@ -114,11 +116,17 @@ public class FlexmiEditor extends TextEditor {
 			resource.load(new ByteArrayInputStream(code.getBytes()), null);
 		}
 		catch (Exception ex) {
-			if (ex instanceof RuntimeException) {
-				if (ex.getCause() instanceof SAXParseException) {
-					parseException = (SAXParseException) ex.getCause();
+				
+				if (ex instanceof RuntimeException) {
+					if (ex.getCause() instanceof TransformerException) {
+						if (ex.getCause().getCause() instanceof SAXParseException) {
+							parseException = (SAXParseException) ex.getCause().getCause();
+						}
+					}
 				}
-			}
+				else {
+					ex.printStackTrace();
+				}
 		}
 		
 		final String markerType = "org.eclipse.epsilon.flexmi.dt.problemmarker";
@@ -126,7 +134,6 @@ public class FlexmiEditor extends TextEditor {
 		// Update problem markers
 		try {
 			file.deleteMarkers(markerType, true, IResource.DEPTH_INFINITE);
-			
 			if (parseException != null) {
 				createMarker(parseException.getMessage(), parseException.getLineNumber(), true, file, markerType);
 			}
