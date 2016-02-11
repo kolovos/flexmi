@@ -51,7 +51,7 @@ public class AssignmentCalculator {
 		HashMap<Object, Object> map = new HashMap<Object, Object>();
 		if (bestAssignment != null) {
 			for (Assignment assignment : bestAssignment) {
-				if (scorer.score(assignment.getLeft(), assignment.getRight()) > 0) {
+				if (scorer.score(assignment.getLeft(), assignment.getRight()) >= 0) {
 					map.put(assignment.getLeft(), assignment.getRight());
 				}
 			}
