@@ -28,6 +28,7 @@ import org.eclipse.emf.ecore.resource.impl.ResourceImpl;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.epsilon.emc.emf.InMemoryEmfModel;
 import org.eclipse.epsilon.eol.EolModule;
+import org.eclipse.epsilon.flexmi.AssignmentCalculator.AssignmentScorer;
 import org.eclipse.epsilon.flexmi.xml.Location;
 import org.eclipse.epsilon.flexmi.xml.PseudoSAXParser;
 import org.eclipse.epsilon.flexmi.xml.PseudoSAXParser.Handler;
@@ -55,8 +56,8 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 	protected StringSimilarityProvider stringSimilarityProvider = new DefaultStringSimilarityProvider();
 	
 	protected boolean fuzzyContainmentSlotMatching = true;
-	protected boolean orphansAsTopLevel = false;
-	protected int fuzzyMatchingThreshold = 2;
+	protected boolean orphansAsTopLevel = true;
+	protected int fuzzyMatchingThreshold = 0;
 	
 	public static void main(String[] args) throws Exception {
 		
@@ -87,7 +88,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 			throw ioException;
 		}
 		catch (Exception ex) {
-			//ex.printStackTrace();
+			ex.printStackTrace();
 			throw new RuntimeException(ex);
 		}
 	}
@@ -352,18 +353,46 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 	
 	protected void setAttributes(EObject eObject, Element element) {
 		
-		NamedNodeMap attributes = element.getAttributes();
+		NamedNodeMap attributeNodes = element.getAttributes();
+		ArrayList<Node> attributes = new ArrayList<Node>();
+		for (int i=0;i<attributeNodes.getLength();i++) {
+			attributes.add(attributeNodes.item(i));
+		}
+		
 		List<EStructuralFeature> eStructuralFeatures = getCandidateStructuralFeaturesForAttribute(eObject.eClass());
 		eObjectTraceManager.trace(eObject, getLineNumber(element));
 		
-		for (int i=0;i<attributes.getLength();i++) {
+		AssignmentCalculator assignmentCalculator = new AssignmentCalculator();
+		Map<Object, Object> assignment = assignmentCalculator.calculateAssignment(attributes, eStructuralFeatures, new AssignmentScorer() {
 			
-			String name = attributes.item(i).getNodeName();
-			String value = attributes.item(i).getNodeValue();
+			@Override
+			public float score(Object left, Object right) {
+				
+				Node attribute = (Node) left;
+				EStructuralFeature sf = (EStructuralFeature) right;
+				
+				//try {
+					/*if (sf instanceof EAttribute) {
+						EAttribute eAttribute = (EAttribute) sf;
+						eAttribute.getEAttributeType().getEPackage().getEFactoryInstance().createFromString(eAttribute.getEAttributeType(), attribute.getNodeValue());
+					}*/
+					return stringSimilarityProvider.getSimilarity(attribute.getNodeName().toLowerCase(), sf.getName().toLowerCase());
+				//}
+				//catch (Exception ex) {
+				//	return -1;
+				//}
+			}
 			
-			EStructuralFeature sf = (EStructuralFeature) eNamedElementForName(name, eStructuralFeatures);
+		});
+		
+		for (Node attribute : attributes) {
+			
+			String name = attribute.getNodeName();
+			String value = attribute.getNodeValue();
+			EStructuralFeature sf = (EStructuralFeature) assignment.get(attribute);
+			
 			if (sf != null) {
-				eStructuralFeatures.remove(sf);
+				
 				if (sf instanceof EAttribute) {
 					setEAttributeValue(eObject, (EAttribute) sf, name, value);
 				}
@@ -409,6 +438,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 			return eAttribute.getEAttributeType().getEPackage().getEFactoryInstance().createFromString(eAttribute.getEAttributeType(), value);
 		}
 		catch (Exception ex) {
+			ex.printStackTrace();
 			addParseWarning(ex.getMessage() + " in the value of " + attributeName);
 			return null;
 		}
