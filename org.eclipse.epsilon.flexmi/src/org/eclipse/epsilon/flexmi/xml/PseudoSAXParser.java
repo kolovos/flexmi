@@ -57,7 +57,8 @@ public class PseudoSAXParser {
 	}
 
 	public void parse(InputStream inputStream, Handler handler) throws ParserConfigurationException, SAXException, TransformerException  {
-
+		//Stopwatch stopwatch = new Stopwatch();
+		//stopwatch.resume();
 		DocumentBuilderFactory documentBuilderFactory = DocumentBuilderFactory.newInstance();
 		TransformerFactory transformerFactory = TransformerFactory.newInstance();
 		Transformer transformer = transformerFactory.newTransformer();
@@ -70,7 +71,9 @@ public class PseudoSAXParser {
 		XMLReader xmlReader = saxParser.getXMLReader();
 		
 		transformer.transform(new SAXSource(new LocationRecorder(xmlReader,document), new InputSource(inputStream)), new DOMResult(document));
-
+		//stopwatch.pause();
+		//System.out.print(stopwatch.getElapsed()+", ");
+		
 		handler.startDocument(document);
 		visit(document, handler);
 		handler.endDocument(document);

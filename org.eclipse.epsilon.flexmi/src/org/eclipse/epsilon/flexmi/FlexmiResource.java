@@ -26,8 +26,6 @@ import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceImpl;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
-import org.eclipse.epsilon.emc.emf.InMemoryEmfModel;
-import org.eclipse.epsilon.eol.EolModule;
 import org.eclipse.epsilon.flexmi.AssignmentCalculator.AssignmentScorer;
 import org.eclipse.epsilon.flexmi.xml.Location;
 import org.eclipse.epsilon.flexmi.xml.PseudoSAXParser;
@@ -53,7 +51,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 	protected List<String> scripts = new ArrayList<String>();
 	protected HashMap<String, EClass> eClassCache = new HashMap<String, EClass>();
 	protected HashMap<EClass, List<EClass>> allSubtypesCache = new HashMap<EClass, List<EClass>>();
-	protected StringSimilarityProvider stringSimilarityProvider = new DefaultStringSimilarityProvider();
+	protected StringSimilarityProvider stringSimilarityProvider = new CachedStringSimilarityProvider(new DefaultStringSimilarityProvider());
 	
 	protected boolean fuzzyContainmentSlotMatching = true;
 	protected boolean orphansAsTopLevel = true;
@@ -64,13 +62,15 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 		ResourceSet resourceSet = new ResourceSetImpl();
 		resourceSet.getPackageRegistry().put(EcorePackage.eINSTANCE.getNsURI(), EcorePackage.eINSTANCE);
 		resourceSet.getResourceFactoryRegistry().getExtensionToFactoryMap().put("*", new FlexmiResourceFactory());
-		Resource resource = resourceSet.createResource(URI.createURI(FlexmiResource.class.getResource("sample.xml").toString()));
+		//Resource resource = resourceSet.createResource(URI.createURI(FlexmiResource.class.getResource("sample.xml").toString()));
+		Resource resource = resourceSet.createResource(URI.createFileURI("/Users/dkolovos/git/ecmfa16-flexmi/models/generated-1000.flexmi"));
 		resource.load(null);
 		
+		/*
 		EolModule module = new EolModule();
 		module.parse("EReference.all.first().eType.name.println();");
 		module.getContext().getModelRepository().addModel(new InMemoryEmfModel("M", resource));
-		module.execute();
+		module.execute();*/
 	}
 	
 	public FlexmiResource(URI uri) {
@@ -134,7 +134,6 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 
 	@Override
 	public void startElement(Element element) {
-		
 		currentNode = element;
 		String name = element.getNodeName();
 		
@@ -163,7 +162,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 		else {
 			Object peek = stack.peek();
 			
-			// We find an orphan elmeent but don't treat it as top-level
+			// We find an orphan element but don't treat it as top-level
 			if (peek == null) {
 				stack.push(null);
 				addParseWarning("Could not map element " + name + " to an EObject");
@@ -303,8 +302,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 	
 	@SuppressWarnings("unchecked")
 	protected void resolveReferences() {
-		
-		List<UnresolvedReference> resolvedReferences = new ArrayList<UnresolvedReference>();
+		List<UnresolvedReference> unresolvableReferences = new ArrayList<UnresolvedReference>();
 		
 		for (UnresolvedReference unresolvedReference : unresolvedReferences) {
 			EReference eReference = unresolvedReference.getEReference();
@@ -318,29 +316,25 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 							new EReferenceSlot(eReference, unresolvedReference.getEObject()).newValue(candidate);
 						}
 					}
-					resolvedReferences.add(unresolvedReference);
 				}
 				else {
-					resolveReference(unresolvedReference, resolvedReferences);
+					if (!resolveReference(unresolvedReference)) unresolvableReferences.add(unresolvedReference);
 				}
 			}
 			else {
-				resolveReference(unresolvedReference, resolvedReferences);
+				if (!resolveReference(unresolvedReference)) unresolvableReferences.add(unresolvedReference);
 			}
 		}
 		
-		unresolvedReferences.removeAll(resolvedReferences);
-		for (UnresolvedReference reference : unresolvedReferences) {
+		for (UnresolvedReference reference : unresolvableReferences) {
 			addParseWarning("Could not resolve target " + reference.getValue() + " for reference " + reference.getAttributeName() + " (" + reference.getEReference().getName() + ")", reference.getLine());
 		}
 		eObjectIdManager = new EObjectIdManager();
 	}
 	
-	protected void resolveReference(UnresolvedReference unresolvedReference, List<UnresolvedReference> resolvedReferences) {
+	protected boolean resolveReference(UnresolvedReference unresolvedReference) {
 		List<EObject> candidates = eObjectIdManager.getEObjectsById(unresolvedReference.getValue());
-		if (unresolvedReference.resolve(candidates)) {
-			resolvedReferences.add(unresolvedReference);
-		}
+		return unresolvedReference.resolve(candidates);
 	}
 	
 	protected int getLineNumber(Node node) {
@@ -353,6 +347,41 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 	
 	protected void setAttributes(EObject eObject, Element element) {
 		
+		NamedNodeMap attributes = element.getAttributes();
+		List<EStructuralFeature> eStructuralFeatures = getCandidateStructuralFeaturesForAttribute(eObject.eClass());
+		eObjectTraceManager.trace(eObject, getLineNumber(element));
+		
+		for (int i=0;i<attributes.getLength();i++) {
+			
+			String name = attributes.item(i).getNodeName();
+			String value = attributes.item(i).getNodeValue();
+			
+			EStructuralFeature sf = (EStructuralFeature) eNamedElementForName(name, eStructuralFeatures);
+			if (sf != null) {
+				eStructuralFeatures.remove(sf);
+				if (sf instanceof EAttribute) {
+					setEAttributeValue(eObject, (EAttribute) sf, name, value);
+				}
+				else if (sf instanceof EReference) {
+					EReference eReference = (EReference) sf;
+					if (eReference.isMany()) {
+						for (String valuePart : value.split(",")) {
+							unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, valuePart.trim(), getLineNumber(element)));
+						}
+					}
+					else {
+						unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, value, getLineNumber(element)));
+					}
+				}
+			}
+			else {
+				addParseWarning("Could not map attribute " + name + " to a structural feature of " + eObject.eClass().getName());
+			}
+		}
+	}
+	
+	protected void setAttributes1(EObject eObject, Element element) {
+		
 		NamedNodeMap attributeNodes = element.getAttributes();
 		ArrayList<Node> attributes = new ArrayList<Node>();
 		for (int i=0;i<attributeNodes.getLength();i++) {
@@ -363,6 +392,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 		eObjectTraceManager.trace(eObject, getLineNumber(element));
 		
 		AssignmentCalculator assignmentCalculator = new AssignmentCalculator();
+
 		Map<Object, Object> assignment = assignmentCalculator.calculateAssignment(attributes, eStructuralFeatures, new AssignmentScorer() {
 			
 			@Override
@@ -370,20 +400,11 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 				
 				Node attribute = (Node) left;
 				EStructuralFeature sf = (EStructuralFeature) right;
-				
-				//try {
-					/*if (sf instanceof EAttribute) {
-						EAttribute eAttribute = (EAttribute) sf;
-						eAttribute.getEAttributeType().getEPackage().getEFactoryInstance().createFromString(eAttribute.getEAttributeType(), attribute.getNodeValue());
-					}*/
-					return stringSimilarityProvider.getSimilarity(attribute.getNodeName().toLowerCase(), sf.getName().toLowerCase());
-				//}
-				//catch (Exception ex) {
-				//	return -1;
-				//}
+				return stringSimilarityProvider.getSimilarity(attribute.getNodeName().toLowerCase(), sf.getName().toLowerCase());
 			}
 			
 		});
+
 		
 		for (Node attribute : attributes) {
 			
@@ -506,7 +527,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 	protected ENamedElement eNamedElementForName(String name, Collection<? extends ENamedElement> candidates, boolean fuzzy) {
 		
 		if (fuzzy) {
-			int maxSimilarity = fuzzyMatchingThreshold;
+			int maxSimilarity = 0;
 			ENamedElement bestMatch = null;
 			for (ENamedElement candidate : candidates) {
 				int similarity = stringSimilarityProvider.getSimilarity(candidate.getName().toLowerCase(), name.toLowerCase());
@@ -515,6 +536,11 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 					bestMatch = candidate;
 				}
 			}
+			
+			if (maxSimilarity == 0 && candidates.size() == 1) {
+				return candidates.iterator().next();
+			}
+			
 			return bestMatch;			
 		}
 		else {

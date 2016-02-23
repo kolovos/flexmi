@@ -1,9 +1,15 @@
 package org.eclipse.epsilon.flexmi.dt;
 
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Set;
+
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.runtime.NullProgressMonitor;
-import org.eclipse.core.runtime.Platform;
 import org.eclipse.emf.common.util.URI;
+import org.eclipse.emf.ecore.EAttribute;
+import org.eclipse.emf.ecore.EClass;
+import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
@@ -42,6 +48,10 @@ public class GenerateXMIAction implements IObjectActionDelegate {
 			flexmiResourceSet.getResourceFactoryRegistry().getExtensionToFactoryMap().put("*", new FlexmiResourceFactory());
 			Resource flexmiResource = flexmiResourceSet.createResource(URI.createPlatformResourceURI(flexmiFile.getFullPath().toOSString()));
 			flexmiResource.load(null);
+			
+			// The EClasses of all model elements
+			final Set<EClass> eClasses = new HashSet<EClass>();
+			
 			ResourceSet xmiResourceSet = new ResourceSetImpl();
 			xmiResourceSet.getResourceFactoryRegistry().getExtensionToFactoryMap().put("*", new XMIResourceFactoryImpl() {
 				@Override
@@ -49,11 +59,27 @@ public class GenerateXMIAction implements IObjectActionDelegate {
 					return new XMIResourceImpl(uri) {
 						@Override
 						protected boolean useUUIDs() {
+							
+							for (EClass eClass : eClasses) {
+								for (EAttribute eAttribute : eClass.getEAttributes()) {
+									if (eAttribute.isID()) return false;
+								}
+							}
+							
 							return true;
 						}
 					};
 				}
 			});
+			
+			// Collect all EClasses of all model elements
+			// so that we can use them above to decide if the XMI
+			// resource will have XMI IDs or not
+			Iterator<EObject> it = flexmiResource.getAllContents();
+			while (it.hasNext()) {
+				eClasses.add(it.next().eClass());
+			}
+			
 			Resource xmiResource = xmiResourceSet.createResource(URI.createPlatformResourceURI(flexmiFile.getFullPath().toOSString().replace(".flexmi", ".xmi")));
 			xmiResource.getContents().addAll(EcoreUtil.copyAll(flexmiResource.getContents()));
 			xmiResource.save(null);
