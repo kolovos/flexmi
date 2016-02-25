@@ -51,7 +51,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 	protected List<String> scripts = new ArrayList<String>();
 	protected HashMap<String, EClass> eClassCache = new HashMap<String, EClass>();
 	protected HashMap<EClass, List<EClass>> allSubtypesCache = new HashMap<EClass, List<EClass>>();
-	protected StringSimilarityProvider stringSimilarityProvider = new CachedStringSimilarityProvider(new DefaultStringSimilarityProvider());
+	protected StringSimilarityProvider stringSimilarityProvider = new DefaultStringSimilarityProvider();
 	
 	protected boolean fuzzyContainmentSlotMatching = true;
 	protected boolean orphansAsTopLevel = true;
@@ -345,7 +345,54 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 		return 0;
 	}
 	
+	
 	protected void setAttributes(EObject eObject, Element element) {
+		
+		NamedNodeMap attributes = element.getAttributes();
+		List<EStructuralFeature> eStructuralFeatures = getCandidateStructuralFeaturesForAttribute(eObject.eClass());
+		
+		if (attributes.getLength() == 0 || eStructuralFeatures.size() == 0) return;
+		
+		double[][] inverseSimilarities = new double[attributes.getLength()][eStructuralFeatures.size()];
+		
+		for (int i=0;i<attributes.getLength();i++) {
+			int j=0;
+			String attributeName = attributes.item(i).getNodeName();
+			for (EStructuralFeature sf : eStructuralFeatures) {
+				int similarity = stringSimilarityProvider.getSimilarity(attributeName, sf.getName());
+				double inverseSimilarity = 1;
+				if (similarity != 0) inverseSimilarity = 1/(double)similarity;
+				inverseSimilarities[i][j] = inverseSimilarity;
+				j++;
+			}
+		}
+		
+		int[] assignment = new HungarianAlgorithm(inverseSimilarities).execute();
+		
+		for (int i=0;i<assignment.length;i++) {
+			String name = attributes.item(i).getNodeName();
+			String value = attributes.item(i).getNodeValue();
+			EStructuralFeature sf = eStructuralFeatures.get(assignment[i]);
+			
+			if (sf instanceof EAttribute) {
+				setEAttributeValue(eObject, (EAttribute) sf, name, value);
+			}
+			else if (sf instanceof EReference) {
+				EReference eReference = (EReference) sf;
+				if (eReference.isMany()) {
+					for (String valuePart : value.split(",")) {
+						unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, valuePart.trim(), getLineNumber(element)));
+					}
+				}
+				else {
+					unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, value, getLineNumber(element)));
+				}
+			}
+		}
+		
+	}
+	
+	protected void setAttributesGreedy(EObject eObject, Element element) {
 		
 		NamedNodeMap attributes = element.getAttributes();
 		List<EStructuralFeature> eStructuralFeatures = getCandidateStructuralFeaturesForAttribute(eObject.eClass());
@@ -380,7 +427,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 		}
 	}
 	
-	protected void setAttributes1(EObject eObject, Element element) {
+	protected void setAttributesNaiveAssignment(EObject eObject, Element element) {
 		
 		NamedNodeMap attributeNodes = element.getAttributes();
 		ArrayList<Node> attributes = new ArrayList<Node>();
