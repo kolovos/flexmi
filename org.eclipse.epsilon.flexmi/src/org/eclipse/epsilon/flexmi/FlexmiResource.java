@@ -51,7 +51,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 	protected List<String> scripts = new ArrayList<String>();
 	protected HashMap<String, EClass> eClassCache = new HashMap<String, EClass>();
 	protected HashMap<EClass, List<EClass>> allSubtypesCache = new HashMap<EClass, List<EClass>>();
-	protected StringSimilarityProvider stringSimilarityProvider = new DefaultStringSimilarityProvider();
+	protected StringSimilarityProvider stringSimilarityProvider = new CachedStringSimilarityProvider(new DefaultStringSimilarityProvider());
 	
 	protected boolean fuzzyContainmentSlotMatching = true;
 	protected boolean orphansAsTopLevel = true;
@@ -360,14 +360,31 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 			String attributeName = attributes.item(i).getNodeName();
 			for (EStructuralFeature sf : eStructuralFeatures) {
 				int similarity = stringSimilarityProvider.getSimilarity(attributeName, sf.getName());
-				double inverseSimilarity = 1;
+				double inverseSimilarity = 2;
 				if (similarity != 0) inverseSimilarity = 1/(double)similarity;
 				inverseSimilarities[i][j] = inverseSimilarity;
 				j++;
 			}
 		}
 		
+		
+//		System.out.println("---" + element.getNodeName() + "---");
+//		for (EStructuralFeature sf : eStructuralFeatures) {
+//			System.out.print(sf.getName() + ",");
+//		}
+//		System.out.println();
+//		for (int i=0;i<inverseSimilarities.length;i++) {
+//			System.out.print(attributes.item(i).getNodeName() + ":");
+//			for (int j=0;j<inverseSimilarities[i].length;j++) {
+//				System.out.print(inverseSimilarities[i][j] + ", ");
+//			}
+//			System.out.println();
+//		}
+//		System.out.println("---");
+		
 		int[] assignment = new HungarianAlgorithm(inverseSimilarities).execute();
+		
+//		System.out.println(attributes.getLength() + "/" + eStructuralFeatures.size() + "/" + assignment.length);
 		
 		for (int i=0;i<assignment.length;i++) {
 			String name = attributes.item(i).getNodeName();
