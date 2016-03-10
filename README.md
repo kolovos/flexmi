@@ -20,7 +20,7 @@ Flexmi is an implementation of EMF's Resource interface that can parse XML docum
 	<u name="mary">
 		<box q="20">
 			<out>
-				<msg to="tom, irene" t="Hello everyone"/>
+				<msg to="tom, mary" t="Hello everyone"/>
 			</out>
 		</box>
 	</u>
