@@ -1,6 +1,6 @@
 Flexmi
 ======
-Flexmi is an implementation of EMF's Resource interface that can parse XML documents in a fuzzy manner. For example it can parse the following XML document (messaging.flexmi):
+Flexmi is an implementation of [EMF's Resource interface](http://download.eclipse.org/modeling/emf/emf/javadoc/2.4.3/org/eclipse/emf/ecore/resource/Resource.html) that can parse XML documents as instances of Ecore metamodels in a fuzzy manner. For example it can parse the following XML document (messaging.flexmi):
 ```xml
 <?xml version="1.0"?>
 <?nsuri http://messaging?>
