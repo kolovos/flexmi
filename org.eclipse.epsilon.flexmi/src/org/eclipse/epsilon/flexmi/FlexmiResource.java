@@ -353,6 +353,15 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 		
 		if (attributes.getLength() == 0 || eStructuralFeatures.size() == 0) return;
 		
+		
+		if (!(eObject.eClass().getEStructuralFeature("id") instanceof EAttribute)) {
+			if (attributes.getNamedItem("id") != null) {
+				String value = attributes.getNamedItem("id").getNodeValue();
+				attributes.removeNamedItem("id");
+				eObjectIdManager.setEObjectId(eObject, value);
+			}
+		}
+		
 		double[][] inverseSimilarities = new double[attributes.getLength()][eStructuralFeatures.size()];
 		
 		for (int i=0;i<attributes.getLength();i++) {
@@ -367,25 +376,8 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 			}
 		}
 		
-		
-//		System.out.println("---" + element.getNodeName() + "---");
-//		for (EStructuralFeature sf : eStructuralFeatures) {
-//			System.out.print(sf.getName() + ",");
-//		}
-//		System.out.println();
-//		for (int i=0;i<inverseSimilarities.length;i++) {
-//			System.out.print(attributes.item(i).getNodeName() + ":");
-//			for (int j=0;j<inverseSimilarities[i].length;j++) {
-//				System.out.print(inverseSimilarities[i][j] + ", ");
-//			}
-//			System.out.println();
-//		}
-//		System.out.println("---");
-		
 		int[] assignment = new HungarianAlgorithm(inverseSimilarities).execute();
-		
-//		System.out.println(attributes.getLength() + "/" + eStructuralFeatures.size() + "/" + assignment.length);
-		
+				
 		for (int i=0;i<assignment.length;i++) {
 			String name = attributes.item(i).getNodeName();
 			String value = attributes.item(i).getNodeValue();
@@ -409,96 +401,6 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 		
 	}
 	
-	protected void setAttributesGreedy(EObject eObject, Element element) {
-		
-		NamedNodeMap attributes = element.getAttributes();
-		List<EStructuralFeature> eStructuralFeatures = getCandidateStructuralFeaturesForAttribute(eObject.eClass());
-		eObjectTraceManager.trace(eObject, getLineNumber(element));
-		
-		for (int i=0;i<attributes.getLength();i++) {
-			
-			String name = attributes.item(i).getNodeName();
-			String value = attributes.item(i).getNodeValue();
-			
-			EStructuralFeature sf = (EStructuralFeature) eNamedElementForName(name, eStructuralFeatures);
-			if (sf != null) {
-				eStructuralFeatures.remove(sf);
-				if (sf instanceof EAttribute) {
-					setEAttributeValue(eObject, (EAttribute) sf, name, value);
-				}
-				else if (sf instanceof EReference) {
-					EReference eReference = (EReference) sf;
-					if (eReference.isMany()) {
-						for (String valuePart : value.split(",")) {
-							unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, valuePart.trim(), getLineNumber(element)));
-						}
-					}
-					else {
-						unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, value, getLineNumber(element)));
-					}
-				}
-			}
-			else {
-				addParseWarning("Could not map attribute " + name + " to a structural feature of " + eObject.eClass().getName());
-			}
-		}
-	}
-	
-	protected void setAttributesNaiveAssignment(EObject eObject, Element element) {
-		
-		NamedNodeMap attributeNodes = element.getAttributes();
-		ArrayList<Node> attributes = new ArrayList<Node>();
-		for (int i=0;i<attributeNodes.getLength();i++) {
-			attributes.add(attributeNodes.item(i));
-		}
-		
-		List<EStructuralFeature> eStructuralFeatures = getCandidateStructuralFeaturesForAttribute(eObject.eClass());
-		eObjectTraceManager.trace(eObject, getLineNumber(element));
-		
-		AssignmentCalculator assignmentCalculator = new AssignmentCalculator();
-
-		Map<Object, Object> assignment = assignmentCalculator.calculateAssignment(attributes, eStructuralFeatures, new AssignmentScorer() {
-			
-			@Override
-			public float score(Object left, Object right) {
-				
-				Node attribute = (Node) left;
-				EStructuralFeature sf = (EStructuralFeature) right;
-				return stringSimilarityProvider.getSimilarity(attribute.getNodeName().toLowerCase(), sf.getName().toLowerCase());
-			}
-			
-		});
-
-		
-		for (Node attribute : attributes) {
-			
-			String name = attribute.getNodeName();
-			String value = attribute.getNodeValue();
-			EStructuralFeature sf = (EStructuralFeature) assignment.get(attribute);
-			
-			if (sf != null) {
-				
-				if (sf instanceof EAttribute) {
-					setEAttributeValue(eObject, (EAttribute) sf, name, value);
-				}
-				else if (sf instanceof EReference) {
-					EReference eReference = (EReference) sf;
-					if (eReference.isMany()) {
-						for (String valuePart : value.split(",")) {
-							unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, valuePart.trim(), getLineNumber(element)));
-						}
-					}
-					else {
-						unresolvedReferences.add(new UnresolvedReference(eObject, eReference, name, value, getLineNumber(element)));
-					}
-				}
-			}
-			else {
-				addParseWarning("Could not map attribute " + name + " to a structural feature of " + eObject.eClass().getName());
-			}
-		}
-	}
-	
 	@SuppressWarnings("unchecked")
 	protected void setEAttributeValue(EObject eObject, EAttribute eAttribute, String attributeName, String value) {
 		if (eAttribute.isMany()) {
@@ -513,7 +415,7 @@ public class FlexmiResource extends ResourceImpl implements Handler {
 			if (eValue == null) return;
 			eObject.eSet(eAttribute, eValue);
 			if (eAttribute.isID() || "name".equalsIgnoreCase(eAttribute.getName())) {
-				eObjectIdManager.setEObjectId(eObject, value);
+				if (!eObjectIdManager.hasId(eObject)) eObjectIdManager.setEObjectId(eObject, value);
 			}
 		}
 	}

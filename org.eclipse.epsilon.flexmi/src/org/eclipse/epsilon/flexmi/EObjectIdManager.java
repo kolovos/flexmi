@@ -26,4 +26,7 @@ public class EObjectIdManager {
 		else return eObjects;
 	}
 	
+	public boolean hasId(EObject eObject) {
+		return cache.values().contains(eObject);
+	}
 }
